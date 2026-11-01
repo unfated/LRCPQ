@@ -1,0 +1,21 @@
+trait_id	description	N	h2
+continuous-2178-both_sexes--	Overall health rating	418781	0.0937
+continuous-1180-both_sexes--	Morning/evening person (chronotype)	375390	0.1072
+continuous-924-both_sexes--	Usual walking pace	417933	0.0773
+continuous-1249-both_sexes--	Past tobacco smoking	386575	0.0818
+continuous-400-both_sexes--irnt	Time to complete round	413099	0.079
+continuous-1050-both_sexes--	Time spend outdoors in summer	381494	0.0713
+continuous-135-both_sexes--	Number of self-reported non-cancer illnesses	420473	0.0612
+continuous-1478-both_sexes--	Salt added to food	420260	0.0774
+biomarkers-30720-both_sexes--irnt	Cystatin C	400940	0.2046
+continuous-1697-both_sexes--	Comparative height size at age 10	413682	0.2339
+continuous-738-both_sexes--	Average total household income before tax	361687	0.0778
+continuous-1160-both_sexes--	Sleep duration	418009	0.066
+continuous-2217-both_sexes--irnt	Age started wearing glasses or contact lenses	361940	0.0654
+continuous-2237-both_sexes--	Plays computer games	420102	0.068
+continuous-845-both_sexes--	Age completed full time education	283575	0.0994
+continuous-1408-both_sexes--	Cheese intake	410327	0.0585
+biomarkers-30700-both_sexes--irnt	Creatinine	400761	0.1911
+biomarkers-30770-both_sexes--irnt	IGF-1	398797	0.2156
+biomarkers-30730-both_sexes--irnt	Gamma glutamyltransferase	400751	0.1785
+categorical-2040-both_sexes-2040-	Risk taking	405831	0.0469

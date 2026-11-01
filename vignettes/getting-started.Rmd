@@ -1,0 +1,199 @@
+---
+title: "Getting started: from raw GWAS files to LRCQ and LRCP"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started: from raw GWAS files to LRCQ and LRCP}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+This tutorial runs the whole pipeline on the small example bundled with the
+package. It takes about three minutes on a laptop. The example has:
+
+- 50 simulated GWAS on two 2.5 Mb regions of chromosome 22, about 14 Mb apart;
+- real 1000 Genomes EUR LD for 2,003 HapMap3 SNPs (PLINK files, 503 samples).
+
+The summary statistics come in a raw format (`CHR BP SNP A1 A2 BETA SE N`),
+with the effect allele flipped at about half of the SNPs, so the tutorial
+starts from munging.
+
+The simulation has two kinds of truth you can check against:
+
+- 30 enriched SNPs (`w = 300`; every other SNP has `w = 1`);
+- two SNP pairs, one in each region, with genetic-effect correlation +0.9 and
+  -0.9.
+
+```{r files}
+library(lrcpq)
+ex <- system.file("extdata", "example", package = "lrcpq")
+list.files(ex)
+head(read.delim(file.path(ex, "trait01.sumstats.gz")), 3)
+```
+
+## 1. Munge the summary statistics
+
+`munge_sumstats()` does the following:
+
+- recognises common column names (the same synonyms as LDSC's `munge_sumstats.py`);
+- builds Z from `Z`, `BETA/SE`, `log(OR)/SE` or a signed P-value;
+- applies INFO and MAF filters and drops strand-ambiguous SNPs;
+- aligns alleles to the LD reference.
+
+`build_z_matrix()` stacks the traits into an m-by-q matrix.
+
+```{r munge}
+ld_all <- ld_from_plink(c("22" = file.path(ex, "ref_chr22")))
+ref <- ld_all$snp
+ids <- sprintf("trait%02d", 1:50)
+munged <- lapply(ids, function(i)
+  munge_sumstats(read.delim(file.path(ex, paste0(i, ".sumstats.gz"))), ref))
+attr(munged[[1]], "log")
+zm <- build_z_matrix(munged, nrow(ref))
+dim(zm$Z)
+```
+
+Restrict the LD reference to the SNPs present in every trait:
+
+```{r ld}
+ld <- ld_from_plink(c("22" = file.path(ex, "ref_chr22")), snps = ref[zm$keep, c("chr", "pos")])
+Z <- zm$Z[zm$keep, ]; n <- zm$n
+c(SNPs = ld$m, traits = ncol(Z))
+```
+
+## 2. Stages 1-2: heritability, genetic correlation and intercepts
+
+On real data, these come from genome-wide LD score regression:
+
+- `ldsc_matrix()` in this package, or the published LDSC estimates;
+- for Pan-UKB, `panukb_select()` returns h2 and total N.
+
+Two regions of one chromosome are far too small to estimate them, so the
+example ships the true values instead.
+
+`M` is the number of SNPs that heritability is spread over. It must match the
+SNP universe behind the LD scores used for h2: 1,094,844 for the HapMap3 set,
+not LDSC's `M_5_50`. In this simulation it is 1e6.
+
+```{r stage12}
+h2 <- read.table(file.path(ex, "h2.tsv"))$V2
+rg <- as.matrix(read.delim(file.path(ex, "rg.tsv"), row.names = 1))
+C  <- as.matrix(read.delim(file.path(ex, "intercept.tsv"), row.names = 1))
+gcov <- gcov_from_rg(h2, rg)
+M <- 1e6
+```
+
+`check_scale()` checks that n, h2 and M are on one scale. It compares the
+mean chi-square with what n h2 / M and the LD scores predict, and gives a
+ratio near 1 when the scales agree. Here the ratio is above 1 because the
+regions contain the enriched SNPs. Genome-wide, with a correct M, it should
+be close to 1.
+
+```{r scale}
+summary(check_scale(Z, ld, n, h2, M, diag(C)))
+```
+
+## 3. Stage 3: LRCQ, phenome-wide enrichment per LD clump
+
+`run_lrcq()` fits OLS within LD windows. It estimates one `w` per tag SNP
+(clumps at r2 < 0.5). `skew = TRUE` adds the skewness-corrected p-values used
+in the paper:
+
+- `p_gt0` tests w > 0;
+- `p_gt1` tests enrichment above the w = 1 background. The null estimate for
+  each tag is `w_null1`, about the clump size.
+
+```{r lrcq}
+fit <- run_lrcq(Z, ld, n, M, gcov = gcov, intercept = C, tag_r2 = 0.5,
+                method = "ols", skew = TRUE)
+tags <- fit$w[!is.na(fit$w$w_raw), ]
+tags$q_gt1 <- p.adjust(tags$p_gt1, "BH")
+head(tags[order(tags$p_gt1), c("rsid", "pos", "w_raw", "se", "w_null1", "p_gt1", "q_gt1")])
+```
+
+Compare with the truth. Tags in LD with an enriched SNP carry part of its
+signal, so the table groups tags by their largest r2 with any enriched SNP:
+
+```{r lrcq-truth}
+truth <- read.delim(file.path(ex, "truth_enriched.tsv"))
+ti <- match(truth$rsid, fit$w$rsid)
+max_r2 <- sapply(tags$snp, function(j) {
+  S <- which(ld$block_id == ld$block_id[j]); tt <- intersect(ti, S)
+  if (!length(tt)) return(0)
+  R <- as.matrix(ld$get(S)); max(R[match(j, S), match(tt, S)]^2)
+})
+table(max_r2_with_enriched = cut(max_r2, c(-1, 0.01, 0.1, 0.5, 1)),
+      q_below_0.05 = tags$q_gt1 < 0.05)
+```
+
+The hits concentrate on tags in LD with the enriched SNPs. Among tags
+essentially unlinked to them (r2 < 0.01), a handful pass. With strong local
+signal (w = 300 here), small mismatches between the 503-sample LD reference
+and the model leak into nearby estimates.
+
+## 4. Stage 4: LRCP, genetic-effect correlation between distal loci
+
+`run_lrcp()` works in four steps:
+
+- it screens tags on their enrichment estimate (`threshold`, default 10);
+- it pairs the screened tags in different LD blocks at least `min_distance`
+  apart;
+- it runs the conditional test with local moments;
+- it reports `rho`, its SE and bootstrap p-values.
+
+`rho` is descriptive. Use the p-value for inference.
+
+```{r lrcp}
+pairs <- run_lrcp(Z, ld, n, M, fit$stage12$gcov, fit$stage12$intercept, fit,
+                  threshold = 10, min_distance = 5e6, n_boot = 1000)
+pairs$rsid1 <- ld$snp$rsid[pairs$snp1]; pairs$rsid2 <- ld$snp$rsid[pairs$snp2]
+pairs <- pairs[order(pairs$p), ]
+nrow(pairs)
+tp <- read.delim(file.path(ex, "truth_pairs.tsv"))
+for (k in seq_len(nrow(tp))) {
+  a <- fit$w$tag[match(tp$rsid1[k], fit$w$rsid)]; b <- fit$w$tag[match(tp$rsid2[k], fit$w$rsid)]
+  i <- which((pairs$snp1 == a & pairs$snp2 == b) | (pairs$snp1 == b & pairs$snp2 == a))
+  cat(sprintf("true rho %+.1f: estimate %+.2f, p = %.3f, rank %d of %d\n",
+              tp$rho[k], pairs$rho[i], pairs$p[i], i, nrow(pairs)))
+}
+```
+
+Both true pairs rank among the top few dozen of the thousands of pairs tested,
+with the right sign. Fifty traits on two regions is a small example, so
+neither pair passes multiple testing.
+
+On real data, the genome-wide screen uses `lrcp_screen()`. Its p-values are
+calibrated by simulating the separable null; see `vignette("real-data")`.
+
+## 5. The same pipeline from the command line
+
+The package installs an `ldsc.py`-style script. Find it with
+`system.file("cli", "lrcpq", package = "lrcpq")`, and put it on your PATH or
+call it with `Rscript`. Each command writes `OUT.log`.
+
+```sh
+EX=$(Rscript -e 'cat(system.file("extdata","example",package="lrcpq"))')
+LRCPQ=$(Rscript -e 'cat(system.file("cli","lrcpq",package="lrcpq"))')
+
+# 1. munge every trait (an @ in --ref-ld stands for the chromosome)
+for i in $(seq -w 1 50); do
+  $LRCPQ munge --sumstats $EX/trait$i.sumstats.gz --ref-ld $EX/ref_chr@ --chr 22 \
+    --out trait$i.munged.gz
+done
+for i in $(seq -w 1 50); do printf "trait$i\ttrait$i.munged.gz\n"; done > list.txt
+
+# 2-3. LRCQ with given h2, rg and intercepts (or --gcov FILE)
+$LRCPQ lrcq --sumstats-list list.txt --ref-ld $EX/ref_chr@ --chr 22 --M 1e6 \
+  --h2 $EX/h2.tsv --rg $EX/rg.tsv --intercept $EX/intercept.tsv \
+  --method ols --skew --out example
+#   -> example.lrcq.tsv.gz, example.stage12.rds, example.input.rds, example.log
+
+# 4. LRCP on the screened tags
+$LRCPQ lrcp --lrcq example --threshold 10 --out example
+#   -> example.lrcp.tsv.gz (sorted by p, with rsid1/rsid2)
+```
+
+Run `lrcpq` with no arguments to list all flags.

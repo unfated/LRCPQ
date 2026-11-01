@@ -1,0 +1,193 @@
+---
+title: "Real data: 444 Pan-UKB traits, genome-wide"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Real data: 444 Pan-UKB traits, genome-wide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+rd <- system.file("extdata", "panukb_tp53", package = "lrcpq")
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = nzchar(rd))
+```
+
+This vignette has two parts.
+
+- **Part 1** runs a real analysis you can try right away. It uses 20 Pan-UKB
+  traits around TP53 on chromosome 17 (2,007 HapMap3 SNPs), with the
+  genome-wide stage 1-2 matrices from the 444-trait analysis. The extract is
+  bundled with the package (Pan-UKB, CC BY 4.0) and runs in about a minute.
+- **Part 2** is the full genome-wide pipeline behind the LRCQ and LRCP papers:
+  444 traits and 1,094,844 HapMap3 SNPs. It needs network access, a large
+  LD reference and several hours, so its code is shown but not run. The
+  numbers quoted are the papers' results (November 2026).
+
+# Part 1: one region, 20 traits
+
+```{r p1-data}
+library(lrcpq)
+rd <- system.file("extdata", "panukb_tp53", package = "lrcpq")
+traits <- read.delim(file.path(rd, "traits.tsv"))
+head(traits[, c("trait_id", "description", "N", "h2")])
+zt <- read.delim(file.path(rd, "z.tsv.gz"), check.names = FALSE)
+Z <- as.matrix(zt[, traits$trait_id]); dim(Z)
+ld <- ld_from_plink(c("17" = file.path(rd, "ref_chr17_tp53")), snps = zt[, c("chr", "pos")])
+```
+
+The Z-scores are already aligned to A1 of the LD reference, the EUR minor
+allele of 1000 Genomes. The stage 1-2 inputs are the rows and columns for
+these 20 traits from the genome-wide LDSC fits of the 444-trait analysis:
+
+- `rg`: genetic correlations;
+- `intercept`: the cross-trait intercepts, from one joint fit, so the matrix
+  is positive semi-definite;
+- `h2`: Pan-UKB LDSC heritability;
+- `N`: total sample size.
+
+```{r p1-stage12}
+rg <- as.matrix(read.delim(file.path(rd, "rg.tsv"), row.names = 1, check.names = FALSE))
+C  <- as.matrix(read.delim(file.path(rd, "intercept.tsv"), row.names = 1, check.names = FALSE))
+G  <- gcov_from_rg(traits$h2, rg)
+n  <- traits$N
+M  <- 1094844                       # HapMap3 SNPs behind the LD scores
+summary(check_scale(Z, ld, n, traits$h2, M, diag(C)))
+```
+
+The median is about 1.3, as expected for a region that carries signal; genome-wide it should be close to 1 when n, h2 and M are on one scale. Using effective N
+instead of total N, or LDSC's `M_5_50` instead of the HapMap3 count, moves
+it far from 1.
+
+```{r p1-lrcq}
+fit <- run_lrcq(Z, ld, n, M, gcov = G, intercept = C, tag_r2 = 0.5,
+                method = "ols", skew = TRUE)
+tags <- fit$w[!is.na(fit$w$w_raw), ]
+head(tags[order(tags$p_gt1), c("rsid", "pos", "w_raw", "se", "w_null1", "p_gt0", "p_gt1")])
+```
+
+`w_raw` is the clump-level phenome-wide enrichment. Without enrichment its
+expected value is `w_null1`. The model SE uses background-filled rule A
+(`se_rectify = "bgA"`, the default). The p-values are skewness-corrected.
+The top tags sit near TP53 and its neighbours (rs9895829 is in TP53). With only 20 traits, this region is underpowered compared with the 444-trait
+analysis. The point of Part 1 is the workflow, not discovery.
+
+# Part 2: the genome-wide pipeline (shown, not run)
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+## 1. LD reference
+
+There are two choices:
+
+- **In-sample UK Biobank LD.** This is what the papers use. It comes from the
+  public PolyFun windows on the Broad bucket (`broad-alkesgroup-ukbb-ld`), 3 Mb
+  windows with 1 Mb steps, and is read with `ld_from_windows()`.
+- **1000 Genomes EUR HapMap3** (503 samples, GRCh37), an out-of-sample
+  alternative. Download the prebuilt PLINK files from the package's GitHub
+  release (`lrcpq_ref_1000G_EUR_HM3_GRCh37.tar.gz`, 56 MB), or rebuild them:
+
+```bash
+bash $(Rscript -e 'cat(system.file("scripts", package = "lrcpq"))')/build_1000g_eur_hm3.sh ref
+```
+
+In those files, A1 is the EUR minor allele. Align all Z-scores to it with
+`harmonise_alleles()` or `munge_sumstats()`.
+
+## 2. Traits
+
+```{r}
+man <- panukb_manifest()
+sel <- panukb_select(man, pop = "EUR", min_n = 50000)   # returns total n and h2
+```
+
+The papers keep 452 EUR traits that pass Pan-UKB's QC. 444 of them have
+genome-wide LDSC fits and enter the analysis. Power depends on the number of
+genetically independent trait dimensions, not on the number of traits. Prune
+near-duplicates with `prune_traits()`. A 150-trait set, one per cluster of
+genetic correlation, served as a sensitivity analysis.
+
+## 3. Stages 1-2: genome-wide LDSC
+
+```{r}
+st <- ldsc_matrix(Z_genome, ldscore, n, M = 1094844)      # or published LDSC output
+G  <- gcov_from_rg(h2_panukb_ldsc, st$rg)                 # genome-wide rg, Pan-UKB h2
+C  <- st$intercept                                       # one joint fit (PSD)
+```
+
+The scale convention:
+
+- n is total N;
+- h2 is Pan-UKB's LDSC h2;
+- M is 1,094,844.
+
+`check_scale()` on large regions should give a median near 1.
+
+## 4. Z-scores
+
+`panukb_z()` reads each phenotype's tabix index and fetches only the byte
+ranges it needs over HTTP. Never use remote tabix over HTTPS. For a
+genome-wide run, stream each trait once and keep the HapMap3 rows:
+
+```{r}
+Zg <- panukb_z(sel, hm3_ids, regions = chromosome_ranges)   # 1.09M x 444
+```
+
+## 5. Stage 3: LRCQ genome-wide
+
+The papers run tag-set OLS in 3 Mb windows with 2 Mb cores, excluding the
+MHC. Tags are clumped at r2 < 0.5, giving 301,693 tags. Inference uses model
+SEs with the background-filled plug-in and skewness-corrected one-sided
+p-values. Run it by chromosome, or by blocks of windows, to keep each job
+short:
+
+```{r}
+for (chr in 1:22) {
+  ldc <- ld_from_windows(file.path(ukb_ld_dir, paste0("chr", chr)))   # converted PolyFun windows
+  f <- run_lrcq(Zg[chr_rows[[chr]], ], ldc, n, 1094844, gcov = G, intercept = C,
+                tag_r2 = 0.5, method = "ols", skew = TRUE)
+  saveRDS(f, sprintf("lrcq_chr%02d.rds", chr))
+}
+```
+
+With OpenBLAS, one chromosome takes minutes to an hour, depending on its
+size. Results in the LRCQ paper:
+
+- 70 omni-loci (99 tags) at FDR 5%, 38 of them at Bonferroni level;
+- 138 tags with W > 0 at FDR 5%;
+- phenome-wide h2 is 3-5 times enriched in coding, conserved, TSS and 5' UTR
+  annotations (`lrcq_annot_regression()`), and depleted in repressed
+  chromatin.
+
+## 6. Stage 4: LRCP genome-wide
+
+The LRCP paper screens enriched LD clumps (7,793 tags) and tests all
+30.2 million distal pairs at least 5 Mb apart with the conditional test.
+`lrcp_screen()` calibrates the p-values against a simulated separable null:
+
+```{r}
+scr <- lrcp_screen(Zt, window, R_list, chr, pos, n, G, 1094844, C,
+                   min_distance = 5e6, n_null = 2e7, p_report = 1e-3)
+head(scr$pairs[order(scr$pairs$p_cal), ])
+```
+
+Results in the LRCP paper:
+
+- 17 pairs at FDR 5% (12 at Bonferroni level), against 23 million flagged by
+  naive correlation;
+- 113 links at P < 1e-5, forming 19 modules.
+
+Gene-level burden tests (`lrcp_gene()`) work on modules. Strong single pairs
+such as TP53 x MDM2 are reported with a bootstrap p-value and their class
+null. Report `rho` descriptively.
+
+## 7. Practical notes
+
+- **Never pass a diagonal `gcov` for real traits.** The SEs would then assume
+  genetically independent traits; the pipelines warn about it.
+- **Take the diagonal and off-diagonal intercepts from one joint fit.**
+  Otherwise the intercept matrix can be indefinite, and the pipelines warn
+  about that too.
+- **Split long runs**, by chromosome or blocks of windows. Write results as
+  you go, so a stopped job can resume.

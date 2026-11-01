@@ -1,0 +1,21 @@
+Package: lrcpq
+Type: Package
+Title: Phenome-Wide Genetic-Effect Enrichment and Correlation from GWAS Summary Statistics
+Version: 0.2.0
+Authors@R: c(
+    person("Lane", "Chen", role = c("aut", "cre"), email = "lanechenhku@gmail.com"),
+    person("Pak Chung", "Sham", role = "aut"))
+Description: Implements the unified matrix-normal framework for phenome-wide
+    genetic-effect variance (LRCQ: per-SNP enrichment w) and genetic-effect
+    correlation (LRCP: SNP-pair correlation R_beta) estimated from many GWAS
+    summary statistics and an LD reference. Provides a simulation engine,
+    LD utilities, LD score regression for heritability, co-heritability and
+    intercepts, and the four-stage LRCQ/LRCP estimators.
+License: GPL (>= 3)
+Encoding: UTF-8
+Depends: R (>= 4.1)
+Imports: Matrix, methods, stats, utils
+Suggests: testthat (>= 3.0.0), data.table, knitr, rmarkdown
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+RoxygenNote: 7.3.1

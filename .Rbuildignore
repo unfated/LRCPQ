@@ -1,0 +1,9 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^inst/scripts/out$
+^\.github$
+^README\.Rmd$
+^_pkgdown\.yml$
+^docs$
+^\.git$
+^\.gitignore$

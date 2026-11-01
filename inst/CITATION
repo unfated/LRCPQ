@@ -1,0 +1,8 @@
+bibentry(
+  bibtype = "Misc",
+  title = "lrcpq: Phenome-Wide Genetic-Effect Enrichment and Correlation from GWAS Summary Statistics",
+  author = c(person("Lane Guolan", "Chen"), person("Pak Chung", "Sham")),
+  year = "2026",
+  note = "R package version 0.2.0. Methods papers in preparation.",
+  url = "https://github.com/unfated/LRCPQ"
+)

@@ -1,0 +1,3 @@
+#!/usr/bin/env Rscript
+# lrcpq command-line tool: lrcpq <munge|lrcq|lrcp> [options]; see ?lrcpq::lrcpq_cli
+lrcpq::lrcpq_cli(commandArgs(trailingOnly = TRUE))
